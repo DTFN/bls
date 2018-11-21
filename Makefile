@@ -2,6 +2,7 @@ include ../mcl/common.mk
 LIB_DIR=lib
 OBJ_DIR=obj
 EXE_DIR=bin
+CFLAGS += -std=c++17
 LDFLAGS += -lpthread
 
 SRC_SRC=bls_c256.cpp bls_c384.cpp bls_c384_256.cpp
