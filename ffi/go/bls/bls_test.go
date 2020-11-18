@@ -1,7 +1,15 @@
 package bls
 
-import "testing"
-import "strconv"
+import (
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/sha512"
+	"encoding/json"
+	"fmt"
+	"strconv"
+	"testing"
+	"unsafe"
+)
 
 var unitN = 0
 
@@ -356,6 +364,216 @@ func testDHKeyExchange(t *testing.T) {
 	}
 }
 
+func testPairing(t *testing.T) {
+	var sec SecretKey
+	sec.SetByCSPRNG()
+	pub := sec.GetPublicKey()
+	m := "abc"
+	sig1 := sec.Sign(m)
+	sig2 := HashAndMapToSignature([]byte(m))
+	if !VerifyPairing(sig1, sig2, pub) {
+		t.Errorf("VerifyPairing")
+	}
+}
+
+func testAggregate(t *testing.T) {
+	var sec SecretKey
+	sec.SetByCSPRNG()
+	pub := sec.GetPublicKey()
+	msgTbl := []string{"abc", "def", "123"}
+	n := len(msgTbl)
+	sigVec := make([]*Sign, n)
+	for i := 0; i < n; i++ {
+		m := msgTbl[i]
+		sigVec[i] = sec.Sign(m)
+	}
+	aggSign := sigVec[0]
+	for i := 1; i < n; i++ {
+		aggSign.Add(sigVec[i])
+	}
+	hashPt := HashAndMapToSignature([]byte(msgTbl[0]))
+	for i := 1; i < n; i++ {
+		hashPt.Add(HashAndMapToSignature([]byte(msgTbl[i])))
+	}
+	if !VerifyPairing(aggSign, hashPt, pub) {
+		t.Errorf("aggregate2")
+	}
+}
+
+func Hash(buf []byte) []byte {
+	if GetOpUnitSize() == 4 {
+		d := sha256.Sum256([]byte(buf))
+		return d[:]
+	}
+	// use SHA512 if bitSize > 256
+	d := sha512.Sum512([]byte(buf))
+	return d[:]
+}
+
+func testHash(t *testing.T) {
+	var sec SecretKey
+	sec.SetByCSPRNG()
+	pub := sec.GetPublicKey()
+	m := "abc"
+	h := Hash([]byte(m))
+	sig1 := sec.Sign(m)
+	sig2 := sec.SignHash(h)
+	if !sig1.IsEqual(sig2) {
+		t.Errorf("SignHash")
+	}
+	if !sig1.Verify(pub, m) {
+		t.Errorf("sig1.Verify")
+	}
+	if !sig2.VerifyHash(pub, h) {
+		t.Errorf("sig2.VerifyHash")
+	}
+}
+
+func testAggregateHashes(t *testing.T) {
+	n := 1000
+	pubVec := make([]PublicKey, n)
+	sigVec := make([]*Sign, n)
+	h := make([][]byte, n)
+	for i := 0; i < n; i++ {
+		sec := new(SecretKey)
+		sec.SetByCSPRNG()
+		pubVec[i] = *sec.GetPublicKey()
+		m := fmt.Sprintf("abc-%d", i)
+		h[i] = Hash([]byte(m))
+		sigVec[i] = sec.SignHash(h[i])
+	}
+	// aggregate sig
+	sig := sigVec[0]
+	for i := 1; i < n; i++ {
+		sig.Add(sigVec[i])
+	}
+	if !sig.VerifyAggregateHashes(pubVec, h) {
+		t.Errorf("sig.VerifyAggregateHashes")
+	}
+}
+
+type SeqRead struct {
+}
+
+func (seq *SeqRead) Read(buf []byte) (int, error) {
+	n := len(buf)
+	for i := 0; i < n; i++ {
+		buf[i] = byte(i)
+	}
+	return n, nil
+}
+
+func testReadRand(t *testing.T) {
+	s1 := new(SeqRead)
+	SetRandFunc(s1)
+	var sec SecretKey
+	sec.SetByCSPRNG()
+	buf := sec.GetLittleEndian()
+	fmt.Printf("(SeqRead) buf=%x\n", buf)
+	for i := 0; i < len(buf)-1; i++ {
+		// ommit buf[len(buf) - 1] because it may be masked
+		if buf[i] != byte(i) {
+			t.Fatal("buf")
+		}
+	}
+	SetRandFunc(rand.Reader)
+	sec.SetByCSPRNG()
+	buf = sec.GetLittleEndian()
+	fmt.Printf("(rand.Reader) buf=%x\n", buf)
+	SetRandFunc(nil)
+	sec.SetByCSPRNG()
+	buf = sec.GetLittleEndian()
+	fmt.Printf("(default) buf=%x\n", buf)
+}
+
+func testJson(t *testing.T) {
+	n := 3
+	var pubs PublicKeys
+	pubs = make([]PublicKey, n)
+	var sec SecretKey
+	for i := 0; i < n; i++ {
+		sec.SetByCSPRNG()
+		pubs[i] = *sec.GetPublicKey()
+	}
+	s := pubs.JSON()
+	fmt.Printf("s=%s\n", s)
+	type T struct {
+		Count      int      `json:"count"`
+		PublicKeys []string `json:"public-keys"`
+	}
+	var dec T
+	if err := json.Unmarshal([]byte(s), &dec); err != nil {
+		t.Fatal(err)
+	}
+	if dec.Count != n {
+		t.Fatalf("Count=%d\n", dec.Count)
+	}
+	for i := 0; i < n; i++ {
+		if pubs[i].SerializeToHexStr() != dec.PublicKeys[i] {
+			t.Fatalf("IsEqual %d\n", i)
+		}
+	}
+}
+
+func testCast(t *testing.T) {
+	var sec SecretKey
+	sec.SetByCSPRNG()
+	{
+		x := *CastFromSecretKey(&sec)
+		sec2 := *CastToSecretKey(&x)
+		if !sec.IsEqual(&sec2) {
+			t.Error("sec is not equal")
+		}
+	}
+	var pub PublicKey
+	var g2 G2
+	if unsafe.Sizeof(pub) != unsafe.Sizeof(g2) {
+		return
+	}
+	pub = *sec.GetPublicKey()
+	g2 = *CastFromPublicKey(&pub)
+	G2Add(&g2, &g2, &g2)
+	pub.Add(&pub)
+	if !pub.IsEqual(CastToPublicKey(&g2)) {
+		t.Error("pub not equal")
+	}
+	sig := sec.Sign("abc")
+	g1 := *CastFromSign(sig)
+	G1Add(&g1, &g1, &g1)
+	sig.Add(sig)
+	if !sig.IsEqual(CastToSign(&g1)) {
+		t.Error("sig not equal")
+	}
+}
+
+func testZero(t *testing.T) {
+	var sec SecretKey
+	sec.SetByCSPRNG()
+	pub := sec.GetPublicKey()
+	sig := sec.Sign("abc")
+	if sec.IsZero() {
+		t.Fatal("sec is zero")
+	}
+	if pub.IsZero() {
+		t.Fatal("pub is zero")
+	}
+	if sig.IsZero() {
+		t.Fatal("sig is zero")
+	}
+	sec.SetDecString("0")
+	pub = sec.GetPublicKey()
+	sig = sec.Sign("abc")
+	if !sec.IsZero() {
+		t.Fatal("sec is not zero")
+	}
+	if !pub.IsZero() {
+		t.Fatal("pub is not zero")
+	}
+	if !sig.IsZero() {
+		t.Fatal("sig is not zero")
+	}
+}
+
 func test(t *testing.T, c int) {
 	err := Init(c)
 	if err != nil {
@@ -363,6 +581,7 @@ func test(t *testing.T, c int) {
 	}
 	unitN = GetOpUnitSize()
 	t.Logf("unitN=%d\n", unitN)
+	testReadRand(t)
 	testPre(t)
 	testRecoverSecretKey(t)
 	testAdd(t)
@@ -373,6 +592,13 @@ func test(t *testing.T, c int) {
 	testOrder(t, c)
 	testDHKeyExchange(t)
 	testSerializeToHexStr(t)
+	testPairing(t)
+	testAggregate(t)
+	testHash(t)
+	testAggregateHashes(t)
+	testJson(t)
+	testCast(t)
+	testZero(t)
 }
 
 func TestMain(t *testing.T) {
@@ -380,8 +606,10 @@ func TestMain(t *testing.T) {
 	t.Log("CurveFp254BNb")
 	test(t, CurveFp254BNb)
 	if GetMaxOpUnitSize() == 6 {
-		t.Log("CurveFp382_1")
-		test(t, CurveFp382_1)
+		if GetFrUnitSize() == 6 {
+			t.Log("CurveFp382_1")
+			test(t, CurveFp382_1)
+		}
 		t.Log("BLS12_381")
 		test(t, BLS12_381)
 	}
