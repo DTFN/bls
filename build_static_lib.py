@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
 
+import sys
 import os
 from os.path import join
 import subprocess
 import glob
+import argparse
 from subprocess import run
+
+parser = argparse.ArgumentParser(description=sys.argv[0])
+parser.add_argument("action", type=str, help="compile / generate.")
+
 
 BASE_PATH = os.path.abspath('.')
 
@@ -164,5 +170,11 @@ def generate_static_bls_mcl_lib():
 
 
 if __name__ == "__main__":
-    make_bls_mcl_lib()
-    generate_static_bls_mcl_lib()
+    args = parser.parse_args()
+
+    if args.action == "compile":
+        make_bls_mcl_lib()
+    elif args.action == "generate":
+        generate_static_bls_mcl_lib()
+    else:
+        print("输入 compile 或者 generate 运行程序.")
