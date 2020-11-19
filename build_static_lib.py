@@ -2,8 +2,10 @@
 # -*- coding: UTF-8 -*-
 
 import os
+from os.path import join
 import subprocess
 import glob
+from subprocess import run
 
 BASE_PATH = os.path.abspath('.')
 
@@ -19,6 +21,8 @@ def join_path(*path_tuple):
     if len(path_list) == 1:
         return os.path.realpath(os.path.join(path_list[0]))
 
+bls_source_dir = BASE_PATH
+mcl_source_dir = join_path(BASE_PATH, "../mcl")
 
 bls_lib_dir = join_path(BASE_PATH, "./lib")
 bls384_lib = join_path(BASE_PATH, "./lib/libbls384.a")
@@ -44,12 +48,54 @@ def run_program(file_name, args, cwd=None, env=None, shell=False):
     else:
         raise TypeError("args must be list type")
 
-    p = subprocess.Popen(cmd_list, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd, env=env, shell=shell)
+    if cwd != None:
+        if not isinstance(cwd, str):
+            raise TypeError("cwd must be string type")
+
+    if env != None:
+        if not isinstance(env, dict):
+            raise TypeError("env must be dict type")
+        for key in env:
+            value = env.get(key)
+            os.environ[key] = value
+
+    p = subprocess.Popen(cmd_list, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd, env=os.environ, shell=shell)
     p.wait()
     return p.returncode, p.stdout.read(), p.stderr.read()
 
 
-def make_static_bls_mcl_lib():
+# 编译bls和mcl源码
+def make_bls_mcl_lib():
+    print("开始编译 mcl 库...")
+
+    return_code, _, stderr = run_program("make", ["clean"], cwd=mcl_source_dir, shell=False)
+    if return_code != 0:
+        print("编译 mcl 库失败：{0}".format(stderr.decode()))
+        return
+
+    return_code, _, stderr = run_program("make", ["-j4"], cwd=mcl_source_dir, env={"MCL_USE_GMP":"0"})
+    if return_code != 0:
+        print("编译 mcl 库失败：{0}".format(stderr.decode()))
+        return
+    
+    print("编译 mcl 库完成.")
+    print("开始编译 bls 库...")
+    
+    return_code, _, stderr = run_program("make", ["clean"], cwd=bls_source_dir, shell=False)
+    if return_code != 0:
+        print("编译 bls 库失败：{0}".format(stderr.decode()))
+        return
+
+    return_code, _, stderr = run_program("make", ["-j4"], cwd=bls_source_dir, env={"MCL_USE_GMP":"0"})
+    if return_code != 0:
+        print("编译 bls 库失败：{0}".format(stderr.decode()))
+        return
+    
+    print("编译 bls 库完成.")
+
+
+# 生成静态链接库
+def generate_static_bls_mcl_lib():
     exists = check_file_extsis(static_lib_dir)
     if isinstance(exists, Exception):
         return_code, _, staderr  = run_program("mkdir", [static_lib_dir])
@@ -114,7 +160,9 @@ def make_static_bls_mcl_lib():
     bls_lib_dir_blsmcl = join_path(bls_lib_dir, libblsmcl_name)
     libblsmcl_stat = os.stat(bls_lib_dir_blsmcl)
     file_size = libblsmcl_stat.st_size
-    print("创建bls、mcl、libstdc++静态库: [{0}] 大小: [{1}] MBytes.".format(bls_lib_dir_blsmcl, round(file_size/1024/1024.0, 2)))
+    print("创建静态链接库: [{0}] 大小: [{1}] MBytes.".format(bls_lib_dir_blsmcl, round(file_size/1024/1024.0, 2)))
+
 
 if __name__ == "__main__":
-    make_static_bls_mcl_lib()
+    make_bls_mcl_lib()
+    generate_static_bls_mcl_lib()
