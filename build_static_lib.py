@@ -8,7 +8,8 @@ import glob
 BASE_PATH = os.path.abspath('.')
 
 ar_bin = "/usr/bin/ar"
-libstdcpp = "libstdc++.a"
+libstdcpp_name = "libstdc++.a"
+libblsmcl_name = "libblsmcl.a"
 
 
 def join_path(*path_tuple):
@@ -23,7 +24,8 @@ bls_lib_dir = join_path(BASE_PATH, "./lib")
 bls384_lib = join_path(BASE_PATH, "./lib/libbls384.a")
 mcl_lib = join_path(BASE_PATH, "../mcl/lib/libmcl.a")
 static_lib_dir = join_path(BASE_PATH, "./static_lib")
-libblsmcl = join_path(static_lib_dir, "libblsmcl.a")
+libblsmcl = join_path(static_lib_dir, libblsmcl_name)
+
 
 def check_file_extsis(filepath):
     try:
@@ -39,6 +41,8 @@ def run_program(file_name, args, cwd=None, env=None, shell=False):
     if isinstance(args, list):
         for arg in args:
             cmd_list.append(arg)
+    else:
+        raise TypeError("args must be list type")
 
     p = subprocess.Popen(cmd_list, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd, env=env, shell=shell)
     p.wait()
@@ -79,12 +83,12 @@ def make_static_bls_mcl_lib():
         print("无法打开 {0}".format(mcl_lib))
         return
     
-    _, stdout, _ = run_program("gcc", ["--print-file-name", libstdcpp])
+    _, stdout, _ = run_program("gcc", ["--print-file-name", libstdcpp_name])
     path = stdout.decode()
     stdcpp_path = path.replace('\n', '')
     exists = check_file_extsis(stdcpp_path)
     if isinstance(exists, Exception):
-        print("无法找到 {0}".format(libstdcpp))
+        print("无法找到 {0}".format(libstdcpp_name))
         return
     
     return_code, _, _ = run_program(ar_bin, ["x", stdcpp_path], cwd=static_lib_dir)
@@ -93,6 +97,9 @@ def make_static_bls_mcl_lib():
         return
     
     target_files = glob.glob(os.path.join(static_lib_dir, "*.o"))
+    if len(target_files) == 0:
+        print("目录 [{0}] 找不到目标文件.".format(static_lib_dir))
+        return
     
     return_code, _, stderr = run_program(ar_bin, ["rc", libblsmcl, *target_files], cwd=static_lib_dir)
     if return_code != 0:
@@ -104,9 +111,10 @@ def make_static_bls_mcl_lib():
         print("复制文件失败 {0}: {1}".format(libblsmcl, stderr.decode()))
         return
 
-    libblsmcl_stat = os.stat(libblsmcl)
+    bls_lib_dir_blsmcl = join_path(bls_lib_dir, libblsmcl_name)
+    libblsmcl_stat = os.stat(bls_lib_dir_blsmcl)
     file_size = libblsmcl_stat.st_size
-    print("创建bls、mcl、libstdc++静态库: [{0}] 大小: [{1}] MBytes.".format(libblsmcl, file_size/1024/1024.0))
+    print("创建bls、mcl、libstdc++静态库: [{0}] 大小: [{1}] MBytes.".format(bls_lib_dir_blsmcl, round(file_size/1024/1024.0, 2)))
 
 if __name__ == "__main__":
     make_static_bls_mcl_lib()
